@@ -97,7 +97,7 @@ async function callDeepSeek(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model: "deepseek-v4-flash",
         messages,
         temperature: 0,
         max_tokens: 300,
@@ -134,7 +134,7 @@ async function callDeepSeek(
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: "deepseek-chat",
+          model: "deepseek-v4-flash",
           messages: retryMessages,
           temperature: 0,
           max_tokens: 300,
