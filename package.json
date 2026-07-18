@@ -1,0 +1,20 @@
+{
+  "name": "telegram-bot-vercel",
+  "version": "1.0.0",
+  "description": "Bot de Telegram con Telegraf desplegado en Vercel",
+  "main": "api/webhook.ts",
+  "scripts": {
+    "build": "tsc",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "telegraf": "^4.15.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "@types/node": "^20.10.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
