@@ -4,7 +4,7 @@
   "description": "Bot de Telegram con Telegraf desplegado en Vercel",
   "main": "api/webhook.ts",
   "scripts": {
-    "build": "tsc",
+    "typecheck": "tsc",
     "deploy": "vercel --prod"
   },
   "dependencies": {
