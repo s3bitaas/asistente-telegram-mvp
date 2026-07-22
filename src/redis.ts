@@ -26,27 +26,16 @@ interface StoredOrder {
   timestamp: number;
 }
 
-export async function saveOrder(
-  chatId: number | string,
-  messageId: number,
-  order: ParsedOrder
-): Promise<void> {
-  const key = `pedido:${chatId}:${messageId}`;
-  const value: StoredOrder = {
-    order,
-    timestamp: Date.now(),
-  };
-  await redis.set(key, JSON.stringify(value), { ex: 86400 });
-}
+
 
 export async function getOrder(
   chatId: number | string,
   messageId: number
 ): Promise<StoredOrder | null> {
   const key = `pedido:${chatId}:${messageId}`;
-  const data = await redis.get<string>(key);
+  const data = await redis.get<StoredOrder>(key);
   if (!data) return null;
-  return JSON.parse(data) as StoredOrder;
+  return typeof data === 'string' ? (JSON.parse(data) as StoredOrder) : data;
 }
 
 export async function deleteOrder(
