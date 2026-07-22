@@ -59,8 +59,8 @@ REGLAS ESTRICTAS:
 9. Si el texto menciona varios productos iguales, agrúpalos en un solo ítem con cantidad > 1.
 10. Devuelve EXCLUSIVAMENTE un objeto JSON válido, sin markdown, sin texto adicional. No uses bloques de código (\`\`\`). Solo el JSON crudo.
 
-Ejemplo de respuesta esperada:
-{"items":[{"producto":"Torta de Milanesa","cantidad":2,"extras":["Queso"],"precio_unitario":110,"precio_total":220}],"confianza":"alta","requiere_confirmacion":false,"total_pedido":220}`;
+Ejemplo de formato de respuesta esperada (usa SIEMPRE los productos reales del menú de arriba, este es solo el formato):
+{"items":[{"producto":"NombreDelProductoReal","cantidad":1,"extras":[],"precio_unitario":0,"precio_total":0}],"confianza":"alta","requiere_confirmacion":false,"total_pedido":0}`;
 }
 
 /**
