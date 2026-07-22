@@ -9,9 +9,10 @@
       "maxDuration": 30
     }
   },
- "crons": [
+  "crons": [
     {
       "path": "/api/cron/corte-diario",
       "schedule": "0 4 * * *"
     }
   ]
+}
