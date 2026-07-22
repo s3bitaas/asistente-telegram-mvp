@@ -7,6 +7,7 @@ import {
   checkAndSetDedup,
   saveOrder,
   deleteOrder,
+  getOrder, // ← añadir
 } from './redis';
 
 let bot: Telegraf<Context> | null = null;
@@ -107,33 +108,120 @@ export function getBot(): Telegraf<Context> {
     });
 
     // --- Handler de callback_query (botones inline) ---
-    bot.action(/^(cancelar|modificar):(-?\d+):(\d+)$/, async (ctx) => {
-      const accion = ctx.match[1];       // "cancelar" o "modificar"
-      const chatIdFromData = parseInt(ctx.match[2], 10);
-      const messageId = parseInt(ctx.match[3], 10);
+    // 1. Acción "cancelar" – muestra confirmación
+bot.action(/^cancelar:(-?\d+):(\d+)$/, async (ctx) => {
+  const chatIdFromData = parseInt(ctx.match[1], 10);
+  const messageId = parseInt(ctx.match[2], 10);
 
-      // Verificación de autorización: solo el mismo chat puede ejecutar la acción
-      if (ctx.chat?.id !== chatIdFromData) {
-        return ctx.answerCbQuery('No puedes modificar este pedido.', { show_alert: false });
-      }
+  // Verificar autorización (mismo chat)
+  if (ctx.chat?.id !== chatIdFromData) {
+    return ctx.answerCbQuery('No puedes modificar este pedido.', { show_alert: false });
+  }
 
-      if (accion === 'cancelar') {
-        try {
-          // Borramos el pedido de Redis
-          await deleteOrder(chatIdFromData, messageId);
-          // Editamos el mensaje original
-          await ctx.editMessageText('❌ Pedido cancelado');
-          await ctx.answerCbQuery('Cancelado');
-        } catch (err) {
-          console.error('Error cancelando:', err);
-          await ctx.answerCbQuery('Error al cancelar');
-        }
-      } else if (accion === 'modificar') {
-        // Placeholder para modificación futura
-        await ctx.answerCbQuery('Escribe el pedido corregido y lo reemplazo', { show_alert: false });
-        // Aquí después implementarás la lógica de reemplazo
-      }
+  try {
+    // Recuperar el pedido de Redis para regenerar el mensaje original
+    const stored = await getOrder(chatIdFromData, messageId);
+    if (!stored) {
+      // Si el pedido ya no existe, informamos y limpiamos los botones
+      await ctx.editMessageText('❌ El pedido ya no está disponible.');
+      await ctx.answerCbQuery('Pedido no encontrado');
+      return;
+    }
+
+    const order = stored.order;
+    // Texto original del pedido
+    const textoOriginal = formatOrderMessage(order);
+
+    // Nuevo mensaje de confirmación
+    const mensajeConfirmacion = `${textoOriginal}\n\n¿Seguro que quieres cancelar este pedido?`;
+
+    // Botones de confirmación y regreso
+    await ctx.editMessageText(mensajeConfirmacion, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            Markup.button.callback('✅ Sí, cancelar', `confirmar_cancelar:${chatIdFromData}:${messageId}`),
+            Markup.button.callback('◀️ No, regresar', `volver:${chatIdFromData}:${messageId}`),
+          ],
+        ],
+      },
     });
+    await ctx.answerCbQuery();
+  } catch (error) {
+    console.error('Error en cancelar:', error);
+    await ctx.answerCbQuery('Error al procesar la cancelación', { show_alert: true });
+  }
+});
+
+// 2. Acción "confirmar_cancelar" – borrado definitivo
+bot.action(/^confirmar_cancelar:(-?\d+):(\d+)$/, async (ctx) => {
+  const chatIdFromData = parseInt(ctx.match[1], 10);
+  const messageId = parseInt(ctx.match[2], 10);
+
+  if (ctx.chat?.id !== chatIdFromData) {
+    return ctx.answerCbQuery('No puedes modificar este pedido.', { show_alert: false });
+  }
+
+  try {
+    await deleteOrder(chatIdFromData, messageId);
+    await ctx.editMessageText('❌ Pedido cancelado');
+    await ctx.answerCbQuery('Cancelado');
+  } catch (error) {
+    console.error('Error en confirmar_cancelar:', error);
+    await ctx.answerCbQuery('Error al cancelar', { show_alert: true });
+  }
+});
+
+// 3. Acción "volver" – regresa al mensaje original con los botones normales
+bot.action(/^volver:(-?\d+):(\d+)$/, async (ctx) => {
+  const chatIdFromData = parseInt(ctx.match[1], 10);
+  const messageId = parseInt(ctx.match[2], 10);
+
+  if (ctx.chat?.id !== chatIdFromData) {
+    return ctx.answerCbQuery('No puedes modificar este pedido.', { show_alert: false });
+  }
+
+  try {
+    const stored = await getOrder(chatIdFromData, messageId);
+    if (!stored) {
+      await ctx.editMessageText('❌ El pedido ya no está disponible.');
+      await ctx.answerCbQuery('Pedido no encontrado');
+      return;
+    }
+
+    const order = stored.order;
+    const textoOriginal = formatOrderMessage(order);
+
+    // Volver a poner los botones originales: Cancelar y Modificar
+    await ctx.editMessageText(textoOriginal, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            Markup.button.callback('Cancelar', `cancelar:${chatIdFromData}:${messageId}`),
+            Markup.button.callback('Modificar', `modificar:${chatIdFromData}:${messageId}`),
+          ],
+        ],
+      },
+    });
+    await ctx.answerCbQuery();
+  } catch (error) {
+    console.error('Error en volver:', error);
+    await ctx.answerCbQuery('Error al restaurar el mensaje', { show_alert: true });
+  }
+});
+
+// 4. Acción "modificar" – se mantiene igual (placeholder)
+bot.action(/^modificar:(-?\d+):(\d+)$/, async (ctx) => {
+  const chatIdFromData = parseInt(ctx.match[1], 10);
+  const messageId = parseInt(ctx.match[2], 10);
+
+  if (ctx.chat?.id !== chatIdFromData) {
+    return ctx.answerCbQuery('No puedes modificar este pedido.', { show_alert: false });
+  }
+
+  await ctx.answerCbQuery('Escribe el pedido corregido y lo reemplazo', { show_alert: false });
+  // Aquí se implementará la lógica de reemplazo más adelante
+});
 
     // Manejo global de errores de Telegraf
     bot.catch((err, ctx) => {
