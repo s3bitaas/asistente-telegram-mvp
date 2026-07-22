@@ -52,7 +52,7 @@ export function getBot(): Telegraf<Context> {
 
         // --- Obtener menú desde Google Sheets ---
         const menu = await writeMenuTab(TEST_SHEET_ID);
-console.log('MENU RECIBIDO:', JSON.stringify(menu));
+
         // --- Parseo del pedido con IA ---
         const orden = await parseOrder(texto, menu);
 
