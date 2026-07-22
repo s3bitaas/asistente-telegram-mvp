@@ -88,7 +88,8 @@ export async function getDailyOrders(
       const values = await pipeline.exec<string[]>();
       for (let i = 0; i < values.length; i++) {
         if (!values[i]) continue;
-        const stored: StoredOrder = JSON.parse(values[i] as string);
+        const raw = values[i];
+const stored: StoredOrder = typeof raw === 'string' ? JSON.parse(raw) : (raw as StoredOrder);
         if (stored.timestamp >= startTimestamp) {
           orders.push(stored);
         }
