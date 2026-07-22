@@ -3,6 +3,17 @@
     "api/webhook.ts": {
       "memory": 256,
       "maxDuration": 10
+    },
+    "api/cron/corte-diario.ts": {
+      "memory": 512,
+      "maxDuration": 30
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/corte-diario",
+      "schedule": "0 22 * * *",
+      "timezone": "America/Mexico_City"
+    }
+  ]
 }
