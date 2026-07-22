@@ -9,11 +9,9 @@
       "maxDuration": 30
     }
   },
-  "crons": [
+ "crons": [
     {
       "path": "/api/cron/corte-diario",
-      "schedule": "0 22 * * *",
-      "timezone": "America/Mexico_City"
+      "schedule": "0 4 * * *"
     }
   ]
-}
