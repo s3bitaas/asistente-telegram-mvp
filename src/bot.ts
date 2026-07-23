@@ -52,7 +52,7 @@ export function getBot(): Telegraf<Context> {
       const messageId = ctx.message.message_id;
 
       // --- Flujo de onboarding activo ---
-      if (isChatInRegistration(chatId)) {
+      if (await isChatInRegistration(chatId)) {
         try {
           const respuesta = await handleRegistrationStep(chatId, texto);
           if (respuesta) {

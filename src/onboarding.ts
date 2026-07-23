@@ -1,6 +1,7 @@
 // src/onboarding.ts
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { duplicateMasterTemplate } from './googleSheets';
+import { redis } from './redis'; // cliente Upstash ya configurado
 
 // ---------------------------------------------------------------------------
 // Tipos internos
@@ -18,7 +19,7 @@ interface RegistrationState {
 // ---------------------------------------------------------------------------
 
 const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''; // usa service_role para inserciones
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 let supabase: SupabaseClient | null = null;
 function getSupabase(): SupabaseClient {
@@ -32,16 +33,23 @@ function getSupabase(): SupabaseClient {
 }
 
 // ---------------------------------------------------------------------------
-// Almacén de estados en memoria (dura lo que la función serverless esté caliente)
+// Almacén de estados en Redis (persiste entre invocaciones serverless)
 // ---------------------------------------------------------------------------
 
-const registrationStates = new Map<number, RegistrationState>();
+const STATE_TTL = 3600; // 1 hora
+
+function buildKey(chatId: number): string {
+  return `registro:${chatId}`;
+}
 
 /**
- * Verifica si un chat_id ya se encuentra en proceso de registro.
+ * Verifica si un chat_id se encuentra en proceso de registro.
+ * Ahora es asíncrono porque consulta Redis.
  */
-export function isChatInRegistration(chatId: number): boolean {
-  return registrationStates.has(chatId);
+export async function isChatInRegistration(chatId: number): Promise<boolean> {
+  const key = buildKey(chatId);
+  const exists = await redis.exists(key);
+  return exists > 0;
 }
 
 /**
@@ -49,9 +57,7 @@ export function isChatInRegistration(chatId: number): boolean {
  * Si el negocio ya existe en Supabase, responde con un mensaje y no inicia.
  * Devuelve el texto de la primera pregunta.
  */
-export async function startRegistration(
-  chatId: number
-): Promise<string> {
+export async function startRegistration(chatId: number): Promise<string> {
   const db = getSupabase();
 
   // Verificar si ya existe en la tabla negocios
@@ -66,8 +72,10 @@ export async function startRegistration(
     return '⚠️ Tu negocio ya está registrado. Si necesitas ayuda, contacta al administrador.';
   }
 
-  // Iniciar estado
-  registrationStates.set(chatId, { step: 'nombre' });
+  // Iniciar estado en Redis con TTL de 1 hora
+  const initialState: RegistrationState = { step: 'nombre' };
+  await redis.set(buildKey(chatId), JSON.stringify(initialState), { ex: STATE_TTL });
+
   return '🍽️ ¡Vamos a registrar tu negocio!\n\nPrimero, ¿cuál es el nombre del negocio?';
 }
 
@@ -81,8 +89,18 @@ export async function handleRegistrationStep(
   chatId: number,
   text: string
 ): Promise<string | null> {
-  const state = registrationStates.get(chatId);
-  if (!state) return null; // no debería ocurrir
+  const key = buildKey(chatId);
+  const stateJson = await redis.get<string>(key);
+  if (!stateJson) return null; // no hay registro activo
+
+  let state: RegistrationState;
+  try {
+    state = JSON.parse(stateJson);
+  } catch {
+    // estado corrupto, eliminarlo y empezar de nuevo
+    await redis.del(key);
+    return '❌ Ocurrió un error con el estado del registro. Usa /registrar para empezar de nuevo.';
+  }
 
   const trimmed = text.trim();
 
@@ -93,6 +111,7 @@ export async function handleRegistrationStep(
       }
       state.nombre = trimmed;
       state.step = 'telefono';
+      await redis.set(key, JSON.stringify(state), { ex: STATE_TTL });
       return '📞 Ahora escribe el número de teléfono (10 dígitos):';
 
     case 'telefono':
@@ -101,6 +120,7 @@ export async function handleRegistrationStep(
       }
       state.telefono = trimmed;
       state.step = 'correo';
+      await redis.set(key, JSON.stringify(state), { ex: STATE_TTL });
       return '📧 Por último, escribe el correo electrónico:';
 
     case 'correo':
@@ -114,7 +134,7 @@ export async function handleRegistrationStep(
         return await completarRegistro(chatId, state);
       } catch (error: any) {
         // Limpiar estado en caso de error grave
-        registrationStates.delete(chatId);
+        await redis.del(key);
         return `❌ Ocurrió un error durante el registro: ${error.message}. Por favor intenta de nuevo más tarde o contacta al administrador.`;
       }
 
@@ -163,14 +183,14 @@ async function completarRegistro(
     .eq('id', nuevoNegocio.id);
 
   if (updateError) {
-    // No revertimos la creación del sheet, pero informamos el error
     throw new Error(
       `Se creó la hoja de cálculo pero no se pudo guardar el ID: ${updateError.message}. Contacta al administrador con este dato: Sheet ID = ${sheetId}`
     );
   }
 
-  // 4. Limpiar estado
-  registrationStates.delete(chatId);
+  // 4. Limpiar estado de Redis
+  const key = buildKey(chatId);
+  await redis.del(key);
 
   // 5. Mensaje de éxito
   return (
