@@ -71,7 +71,7 @@ export async function getDailyOrders(
 ): Promise<StoredOrder[]> {
   const pattern = `pedido:${chatId}:*`;
   const orders: StoredOrder[] = [];
-  let cursor: number | undefined = 0;
+  let cursor: string | number = 0;
 
   const startOfDay = new Date();
   startOfDay.setUTCHours(0, 0, 0, 0);
@@ -79,7 +79,7 @@ export async function getDailyOrders(
 
   do {
     const result = await redis.scan(cursor, { match: pattern, count: 100 });
-    cursor = result[0] === 0 ? undefined : result[0];
+    cursor = result[0];
     const keys = result[1];
 
     if (keys.length > 0) {
@@ -89,13 +89,14 @@ export async function getDailyOrders(
       for (let i = 0; i < values.length; i++) {
         if (!values[i]) continue;
         const raw = values[i];
-const stored: StoredOrder = typeof raw === 'string' ? JSON.parse(raw) : (raw as StoredOrder);
+        const stored: StoredOrder =
+          typeof raw === 'string' ? (JSON.parse(raw) as StoredOrder) : (raw as StoredOrder);
         if (stored.timestamp >= startTimestamp) {
           orders.push(stored);
         }
       }
     }
-  } while (cursor !== undefined);
+  } while (String(cursor) !== '0');
 
   orders.sort((a, b) => b.timestamp - a.timestamp);
   return orders;
