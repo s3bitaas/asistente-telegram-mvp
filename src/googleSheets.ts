@@ -122,4 +122,106 @@ export async function duplicateMasterTemplate(
       fileId: newFileId,
       requestBody: {
         type: 'user',
-        role:
+        role: 'writer',
+        emailAddress: emailCliente,
+      },
+      sendNotificationEmail: false,
+    })
+  );
+
+  const sheetUrl = `https://docs.google.com/spreadsheets/d/${newFileId}`;
+  return { sheetId: newFileId, sheetUrl };
+}
+
+// ---------------------------------------------------------------------------
+// Leer pestaña "Menú" de un Sheet → MenuItem[] (con caché de proceso)
+// ---------------------------------------------------------------------------
+
+export async function writeMenuTab(sheetId: string): Promise<MenuItem[]> {
+  const cached = menuCache.get(sheetId);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.menu;
+  }
+
+  const auth = getAuthClient();
+  const sheets: sheets_v4.Sheets = google.sheets({ version: 'v4', auth });
+
+  const response = await retryWithBackoff(() =>
+    sheets.spreadsheets.values.get({
+      spreadsheetId: sheetId,
+      range: 'Menú!A:D',
+    })
+  );
+
+  const rows = response.data.values;
+  if (!rows || rows.length === 0) {
+    throw new Error('La pestaña "Menú" está vacía o no existe');
+  }
+
+  const menu: MenuItem[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const [nombre, tipo, precioRaw, sinonimosRaw] = rows[i];
+    if (!nombre || !tipo) continue;
+
+    if (tipo !== 'base' && tipo !== 'extra') {
+      console.warn(`Tipo inválido en fila ${i + 1}: ${tipo}, se omite`);
+      continue;
+    }
+
+    const precio = parseFloat(precioRaw);
+    if (isNaN(precio)) {
+      console.warn(`Precio inválido en fila ${i + 1}: ${precioRaw}, se omite`);
+      continue;
+    }
+
+    const sinonimos = sinonimosRaw
+      ? sinonimosRaw
+          .split(',')
+          .map((s: string) => s.trim())
+          .filter((s: string) => s.length > 0)
+      : [];
+
+    menu.push({ nombre: nombre.trim(), tipo, precio, sinonimos });
+  }
+
+  menuCache.set(sheetId, { menu, timestamp: Date.now() });
+
+  return menu;
+}
+
+// ---------------------------------------------------------------------------
+// Escribir todas las órdenes del día en pestaña "Ventas" (append en batch)
+// ---------------------------------------------------------------------------
+
+export async function batchWriteSales(
+  sheetId: string,
+  pedidos: ParsedOrder[]
+): Promise<void> {
+  if (pedidos.length === 0) return;
+
+  const auth = getAuthClient();
+  const sheets: sheets_v4.Sheets = google.sheets({ version: 'v4', auth });
+
+  const now = new Date().toISOString();
+  const rows = pedidos.flatMap((pedido) =>
+    pedido.items.map((item) => [
+      now,
+      item.producto,
+      item.cantidad,
+      item.extras.join(', '),
+      item.precio_total.toFixed(2),
+    ])
+  );
+
+  await retryWithBackoff(() =>
+    sheets.spreadsheets.values.append({
+      spreadsheetId: sheetId,
+      range: 'Ventas!A:E',
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values: rows,
+      },
+    })
+  );
+}
