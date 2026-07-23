@@ -11,11 +11,13 @@
     "@supabase/supabase-js": "^2.110.8",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.0",
-    "googleapis": "^173.0.0",
     "telegraf": "^4.15.3"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
+    "dotenv": "^17.4.2",
+    "googleapis": "^173.0.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   },
   "engines": {
