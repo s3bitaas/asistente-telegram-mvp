@@ -8,6 +8,7 @@
     "deploy": "vercel --prod"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.8",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.0",
     "googleapis": "^173.0.0",

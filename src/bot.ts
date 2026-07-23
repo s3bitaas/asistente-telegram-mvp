@@ -10,6 +10,11 @@ import {
   getOrder,
 } from './redis';
 import { writeMenuTab, batchWriteSales } from './googleSheets';
+import {
+  isChatInRegistration,
+  startRegistration,
+  handleRegistrationStep,
+} from './onboarding';
 
 let bot: Telegraf<Context> | null = null;
 
@@ -21,19 +26,46 @@ export function getBot(): Telegraf<Context> {
 
     bot = new Telegraf<Context>(config.botToken);
 
-    // Comando /start
+    // Comando /start (bienvenida genérica)
     bot.start((ctx) => {
       return ctx.reply(
         '¡Bienvenido! Envíame tu pedido y lo registraré.'
       );
     });
 
-    // Handler de texto (pedidos)
+    // Comando /registrar – inicia el flujo de onboarding
+    bot.command('registrar', async (ctx) => {
+      const chatId = ctx.chat.id;
+      try {
+        const mensaje = await startRegistration(chatId);
+        await ctx.reply(mensaje, { parse_mode: 'Markdown' });
+      } catch (error) {
+        console.error('Error en /registrar:', error);
+        await ctx.reply('❌ Ocurrió un error al iniciar el registro. Intenta más tarde.');
+      }
+    });
+
+    // Handler de texto (pedidos y flujo de registro)
     bot.on('text', async (ctx) => {
       const texto = ctx.message.text;
       const chatId = ctx.chat.id;
       const messageId = ctx.message.message_id;
 
+      // --- Flujo de onboarding activo ---
+      if (isChatInRegistration(chatId)) {
+        try {
+          const respuesta = await handleRegistrationStep(chatId, texto);
+          if (respuesta) {
+            await ctx.reply(respuesta, { parse_mode: 'Markdown' });
+          }
+        } catch (error) {
+          console.error('Error en paso de registro:', error);
+          await ctx.reply('❌ Error inesperado. Usa /registrar para reiniciar.');
+        }
+        return; // Salir, no procesar como pedido
+      }
+
+      // --- Procesamiento normal de pedidos ---
       try {
         // --- Rate limit diario ---
         const { success, limit, remaining } = await rateLimiter.limit(
