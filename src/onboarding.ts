@@ -90,16 +90,20 @@ export async function handleRegistrationStep(
   text: string
 ): Promise<string | null> {
   const key = buildKey(chatId);
-  const stateJson = await redis.get<string>(key);
-  if (!stateJson) return null; // no hay registro activo
+  const data = await redis.get<string | RegistrationState>(key);
+  if (!data) return null; // no hay registro activo
 
+  // Manejar tanto string JSON como objeto ya parseado (Upstash Redis)
   let state: RegistrationState;
-  try {
-    state = JSON.parse(stateJson);
-  } catch {
-    // estado corrupto, eliminarlo y empezar de nuevo
-    await redis.del(key);
-    return '❌ Ocurrió un error con el estado del registro. Usa /registrar para empezar de nuevo.';
+  if (typeof data === 'string') {
+    try {
+      state = JSON.parse(data);
+    } catch {
+      await redis.del(key);
+      return '❌ Ocurrió un error con el estado del registro. Usa /registrar para empezar de nuevo.';
+    }
+  } else {
+    state = data as RegistrationState;
   }
 
   const trimmed = text.trim();
