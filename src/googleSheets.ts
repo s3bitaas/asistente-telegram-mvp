@@ -125,7 +125,7 @@ export async function duplicateMasterTemplate(
         role: 'writer',
         emailAddress: emailCliente,
       },
-      sendNotificationEmail: false,
+      sendNotificationEmail: true, // ← cambiado a true para compartir con cuentas que no son Google
     })
   );
 

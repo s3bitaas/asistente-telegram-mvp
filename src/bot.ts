@@ -14,7 +14,7 @@ import {
   isChatInRegistration,
   startRegistration,
   handleRegistrationStep,
-  getNegocioByChatId, // ← nueva importación
+  getNegocioByChatId,
 } from './onboarding';
 
 let bot: Telegraf<Context> | null = null;
@@ -30,7 +30,7 @@ export function getBot(): Telegraf<Context> {
       return ctx.reply('¡Bienvenido! Envíame tu pedido y lo registraré.');
     });
 
-    // Comando /registrar – inicia el flujo de onboarding
+    // Comando /registrar – inicia el flujo de onboarding (mantiene parse_mode)
     bot.command('registrar', async (ctx) => {
       const chatId = ctx.chat.id;
       try {
@@ -53,7 +53,8 @@ export function getBot(): Telegraf<Context> {
         try {
           const respuesta = await handleRegistrationStep(chatId, texto);
           if (respuesta) {
-            await ctx.reply(respuesta, { parse_mode: 'Markdown' });
+            // Quitado parse_mode: 'Markdown' para evitar rotura con caracteres especiales en mensajes de error
+            await ctx.reply(respuesta);
           }
         } catch (error) {
           console.error('Error en paso de registro:', error);
@@ -62,7 +63,7 @@ export function getBot(): Telegraf<Context> {
         return;
       }
 
-      // --- Validación del negocio (debe estar registrado y activo) ---
+      // --- Validación del negocio ---
       const negocio = await getNegocioByChatId(chatId);
       if (!negocio) {
         await ctx.reply('Debes registrarte primero. Usa /registrar para empezar.');
@@ -72,36 +73,34 @@ export function getBot(): Telegraf<Context> {
         await ctx.reply('Tu cuenta está inactiva. Contacta al administrador.');
         return;
       }
-      const sheetId = negocio.sheet_id; // hoja de cálculo del negocio
+      const sheetId = negocio.sheet_id;
 
       // --- Procesamiento normal de pedidos ---
       try {
-        // --- Rate limit diario ---
+        // Rate limit diario
         const { success } = await rateLimiter.limit(`rate:${chatId}`);
         if (!success) {
           await ctx.reply('Has alcanzado el límite diario de mensajes. Vuelve mañana.');
           return;
         }
 
-        // --- Deduplicación por mensaje ---
+        // Deduplicación
         const esNuevo = await checkAndSetDedup(chatId, messageId);
         if (!esNuevo) {
           return;
         }
 
-        // --- Obtener menú desde Google Sheets (ahora usa la hoja del negocio) ---
+        // Obtener menú desde Google Sheets (hoja del negocio)
         const menu = await writeMenuTab(sheetId);
 
-        // --- Parseo del pedido con IA ---
+        // Parseo con IA
         const orden = await parseOrder(texto, menu);
 
-        // Guardamos el pedido en Redis (TTL 24h)
+        // Guardar pedido en Redis
         await saveOrder(chatId, messageId, orden);
 
-        // Formateamos la confirmación
+        // Confirmación con botones
         const mensajeConfirmacion = formatOrderMessage(orden);
-
-        // Enviamos el mensaje con los botones inline
         await ctx.reply(mensajeConfirmacion, {
           reply_markup: Markup.inlineKeyboard([
             [
@@ -116,8 +115,8 @@ export function getBot(): Telegraf<Context> {
       }
     });
 
-    // --- Handler de callback_query (botones inline) ---
-    // 1. Acción "cancelar" – muestra confirmación
+    // --- Handlers de callback_query (botones inline) ---
+    // 1. Cancelar → confirmación
     bot.action(/^cancelar:(-?\d+):(\d+)$/, async (ctx) => {
       const chatIdFromData = parseInt(ctx.match[1], 10);
       const messageId = parseInt(ctx.match[2], 10);
@@ -155,7 +154,7 @@ export function getBot(): Telegraf<Context> {
       }
     });
 
-    // 2. Acción "confirmar_cancelar" – borrado definitivo
+    // 2. Confirmar cancelar → borrar
     bot.action(/^confirmar_cancelar:(-?\d+):(\d+)$/, async (ctx) => {
       const chatIdFromData = parseInt(ctx.match[1], 10);
       const messageId = parseInt(ctx.match[2], 10);
@@ -174,7 +173,7 @@ export function getBot(): Telegraf<Context> {
       }
     });
 
-    // 3. Acción "volver" – regresa al mensaje original
+    // 3. Volver → restaurar mensaje original
     bot.action(/^volver:(-?\d+):(\d+)$/, async (ctx) => {
       const chatIdFromData = parseInt(ctx.match[1], 10);
       const messageId = parseInt(ctx.match[2], 10);
@@ -211,7 +210,7 @@ export function getBot(): Telegraf<Context> {
       }
     });
 
-    // 4. Acción "modificar" – placeholder
+    // 4. Modificar → placeholder
     bot.action(/^modificar:(-?\d+):(\d+)$/, async (ctx) => {
       const chatIdFromData = parseInt(ctx.match[1], 10);
       const messageId = parseInt(ctx.match[2], 10);
