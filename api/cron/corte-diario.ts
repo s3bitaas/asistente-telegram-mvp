@@ -39,6 +39,106 @@ function getSupabaseClient() {
 }
 
 // ---------------------------------------------------------------------------
+// Procesar un negocio individual (se ejecuta en paralelo)
+// ---------------------------------------------------------------------------
+
+async function processNegocio(
+  negocio: NegocioActivo,
+  botToken: string
+): Promise<ResumenNegocio> {
+  const chatId = negocio.telegram_chat_id;
+  const sheetId = negocio.sheet_id;
+  const nombre = negocio.nombre_negocio;
+
+  console.log(`Procesando negocio: ${nombre} (${chatId})`);
+
+  // Si no tiene sheet_id, no se puede escribir
+  if (!sheetId) {
+    const errMsg = `${nombre} (${chatId}): no tiene sheet_id configurado`;
+    console.warn(errMsg);
+    console.log(`Completado con error: ${nombre}`);
+    return {
+      nombre,
+      chatId,
+      pedidos: 0,
+      total: 0,
+      productoTop: '-',
+      error: errMsg,
+    };
+  }
+
+  try {
+    // Obtener pedidos del día desde Redis
+    const pedidosGuardados = await getDailyOrders(chatId);
+    const pedidos: ParsedOrder[] = pedidosGuardados.map((s) => s.order);
+
+    if (pedidos.length === 0) {
+      console.log(`Completado sin pedidos: ${nombre}`);
+      return {
+        nombre,
+        chatId,
+        pedidos: 0,
+        total: 0,
+        productoTop: '-',
+      };
+    }
+
+    // Escribir en Google Sheets
+    await batchWriteSales(sheetId, pedidos);
+
+    // Calcular resumen para este negocio
+    let totalVentas = 0;
+    const contadorProductos: Record<string, number> = {};
+    for (const pedido of pedidos) {
+      totalVentas += pedido.total_pedido;
+      for (const item of pedido.items) {
+        contadorProductos[item.producto] =
+          (contadorProductos[item.producto] || 0) + item.cantidad;
+      }
+    }
+
+    let productoTop = '';
+    let maxUnidades = 0;
+    for (const [prod, cant] of Object.entries(contadorProductos)) {
+      if (cant > maxUnidades) {
+        maxUnidades = cant;
+        productoTop = prod;
+      }
+    }
+
+    // Enviar mensaje al negocio
+    const mensajeNegocio =
+      `📊 *Corte diario*\n` +
+      `📦 Pedidos: ${pedidos.length}\n` +
+      `💰 Total: $${totalVentas.toFixed(2)}\n` +
+      `🏆 Producto estrella: *${productoTop}* (${maxUnidades} unidades)`;
+
+    await sendTelegramMessage(botToken, String(chatId), mensajeNegocio);
+
+    console.log(`Completado: ${nombre}`);
+    return {
+      nombre,
+      chatId,
+      pedidos: pedidos.length,
+      total: totalVentas,
+      productoTop,
+    };
+  } catch (error: any) {
+    const errMsg = `${nombre} (${chatId}): ${error.message || error}`;
+    console.error('Error procesando negocio:', errMsg);
+    console.log(`Completado con error: ${nombre}`);
+    return {
+      nombre,
+      chatId,
+      pedidos: 0,
+      total: 0,
+      productoTop: '-',
+      error: errMsg,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Handler principal
 // ---------------------------------------------------------------------------
 
@@ -75,7 +175,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (!negocios || negocios.length === 0) {
-    // Sin negocios, igual notificamos al admin
     await sendTelegramMessage(
       botToken,
       adminChatId,
@@ -85,98 +184,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  // 3. Procesar cada negocio
+  // 3. Procesar todos los negocios en paralelo
+  const resultados = await Promise.allSettled(
+    (negocios as NegocioActivo[]).map((negocio) => processNegocio(negocio, botToken))
+  );
+
+  // 4. Recolectar resultados
   const resumenes: ResumenNegocio[] = [];
   let totalGlobal = 0;
   let negociosConPedidos = 0;
   const errores: string[] = [];
 
-  for (const negocio of negocios as NegocioActivo[]) {
-    const chatId = negocio.telegram_chat_id;
-    const sheetId = negocio.sheet_id;
-    const nombre = negocio.nombre_negocio;
-
-    if (!sheetId) {
-      // Si no tiene sheet_id, no se puede escribir, se registra error
-      errores.push(`${nombre} (${chatId}): no tiene sheet_id configurado`);
-      continue;
-    }
-
-    try {
-      // Obtener pedidos del día desde Redis
-      const pedidosGuardados = await getDailyOrders(chatId);
-      const pedidos: ParsedOrder[] = pedidosGuardados.map((s) => s.order);
-
-      if (pedidos.length === 0) {
-        // Sin pedidos hoy, no se envía mensaje a este negocio
-        resumenes.push({
-          nombre,
-          chatId,
-          pedidos: 0,
-          total: 0,
-          productoTop: '-',
-        });
-        continue;
+  for (const result of resultados) {
+    if (result.status === 'fulfilled') {
+      const resumen = result.value;
+      resumenes.push(resumen);
+      if (resumen.error) {
+        errores.push(resumen.error);
+      } else if (resumen.pedidos > 0) {
+        totalGlobal += resumen.total;
+        negociosConPedidos++;
       }
-
-      // Escribir en Google Sheets
-      await batchWriteSales(sheetId, pedidos);
-
-      // Calcular resumen para este negocio
-      let totalVentas = 0;
-      const contadorProductos: Record<string, number> = {};
-      for (const pedido of pedidos) {
-        totalVentas += pedido.total_pedido;
-        for (const item of pedido.items) {
-          contadorProductos[item.producto] =
-            (contadorProductos[item.producto] || 0) + item.cantidad;
-        }
-      }
-
-      let productoTop = '';
-      let maxUnidades = 0;
-      for (const [prod, cant] of Object.entries(contadorProductos)) {
-        if (cant > maxUnidades) {
-          maxUnidades = cant;
-          productoTop = prod;
-        }
-      }
-
-      totalGlobal += totalVentas;
-      negociosConPedidos++;
-
-      resumenes.push({
-        nombre,
-        chatId,
-        pedidos: pedidos.length,
-        total: totalVentas,
-        productoTop,
-      });
-
-      // Enviar mensaje al negocio
-      const mensajeNegocio =
-        `📊 *Corte diario*\n` +
-        `📦 Pedidos: ${pedidos.length}\n` +
-        `💰 Total: $${totalVentas.toFixed(2)}\n` +
-        `🏆 Producto estrella: *${productoTop}* (${maxUnidades} unidades)`;
-
-      await sendTelegramMessage(botToken, String(chatId), mensajeNegocio);
-    } catch (error: any) {
-      const errMsg = `${nombre} (${chatId}): ${error.message || error}`;
-      console.error('Error procesando negocio:', errMsg);
+    } else {
+      // Si alguna promesa rechazó inesperadamente (no debería ocurrir porque processNegocio nunca rechaza)
+      const errMsg = `Error inesperado: ${result.reason}`;
       errores.push(errMsg);
-      resumenes.push({
-        nombre,
-        chatId,
-        pedidos: 0,
-        total: 0,
-        productoTop: '-',
-        error: errMsg,
-      });
+      console.error(errMsg);
     }
   }
 
-  // 4. Mensaje consolidado al admin
+  // 5. Mensaje consolidado al admin
   const totalNegocios = negocios.length;
   const lineasAdmin: string[] = [
     '📊 *Corte diario multi‑negocio*',
