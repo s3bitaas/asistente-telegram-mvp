@@ -30,7 +30,6 @@ export interface ParsedOrder {
  * Construye el prompt de sistema con el menú y las instrucciones.
  */
 function buildSystemPrompt(menu: MenuItem[]): string {
-  // Formateamos el menú para que el modelo entienda nombres, sinónimos y precios
   const menuText = menu
     .map(
       (item) =>
@@ -64,7 +63,7 @@ Ejemplo de formato de respuesta esperada (usa SIEMPRE los productos reales del m
 }
 
 /**
- * Construye un prompt de reintento más estricto, recordando la salida esperada.
+ * Construye un prompt de reintento más estricto.
  */
 function buildRetryPrompt(): string {
   return "La respuesta anterior no era un JSON válido. Vuelve a intentarlo, pero esta vez asegúrate de que la salida sea ESTRICTAMENTE un objeto JSON válido sin ningún otro texto. Respeta exactamente la estructura indicada.";
@@ -100,7 +99,8 @@ async function callDeepSeek(
         model: "deepseek-v4-flash",
         messages,
         temperature: 0,
-        max_tokens: 600, // aumentado de 300 a 600
+        max_tokens: 600,
+        thinking: { type: "disabled" }, // Deshabilita el modo de razonamiento interno
       }),
     });
 
@@ -130,7 +130,7 @@ async function callDeepSeek(
       const retryMessages = [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
-        { role: "assistant", content: responseText }, // Incluimos la respuesta fallida para contexto
+        { role: "assistant", content: responseText },
         { role: "user", content: buildRetryPrompt() },
       ];
 
@@ -144,7 +144,8 @@ async function callDeepSeek(
           model: "deepseek-v4-flash",
           messages: retryMessages,
           temperature: 0,
-          max_tokens: 600, // también aumentado en el reintento
+          max_tokens: 600,
+          thinking: { type: "disabled" }, // También deshabilitado en el reintento
         }),
       });
 
@@ -170,7 +171,7 @@ async function callDeepSeek(
 
 /**
  * Interpreta un texto libre de pedido y devuelve un objeto ParsedOrder estructurado.
- * @param textoPedido - El texto en español mexicano coloquial (ej. "quiero 2 tortas de mila con queso")
+ * @param textoPedido - El texto en español mexicano coloquial
  * @param menu - El arreglo de objetos MenuItem que representan el menú del negocio.
  * @returns Una promesa que resuelve a un ParsedOrder.
  */
@@ -202,7 +203,6 @@ export function formatOrderMessage(order: ParsedOrder): string {
 
   lines.push(`Total a la caja: $${order.total_pedido.toFixed(2)}`);
 
-  // Si requiere confirmación, añadimos advertencia
   if (order.requiere_confirmacion) {
     lines.push("⚠️ Revisa bien tu pedido, la interpretación es de baja confianza.");
   }
