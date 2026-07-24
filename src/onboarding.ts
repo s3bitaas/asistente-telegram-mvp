@@ -54,21 +54,29 @@ export async function isChatInRegistration(chatId: number): Promise<boolean> {
 /**
  * Inicia el flujo de registro para un chat.
  * Si el negocio ya existe en Supabase, responde con un mensaje y no inicia.
- * Devuelve el texto de la primera pregunta.
+ * Si existe un registro incompleto (sin sheet_id), lo borra y permite reiniciar.
  */
 export async function startRegistration(chatId: number): Promise<string> {
   const db = getSupabase();
 
-  // Verificar si ya existe en la tabla negocios
+  // Verificar si ya existe en la tabla negocios, y si está completo
   const { data: existing, error } = await db
     .from('negocios')
-    .select('telegram_chat_id')
+    .select('id, sheet_id')
     .eq('telegram_chat_id', chatId)
     .maybeSingle();
 
   if (error) throw new Error(`Error al consultar Supabase: ${error.message}`);
+
   if (existing) {
-    return '⚠️ Tu negocio ya está registrado. Si necesitas ayuda, contacta al administrador.';
+    if (existing.sheet_id) {
+      // Registro completo, no permitir duplicado
+      return '⚠️ Tu negocio ya está registrado. Si necesitas ayuda, contacta al administrador.';
+    } else {
+      // Registro incompleto (sin sheet_id): limpiar para permitir reintento
+      await db.from('negocios').delete().eq('id', existing.id);
+      // Continuar con el flujo normal
+    }
   }
 
   // Iniciar estado en Redis con TTL de 1 hora
@@ -142,6 +150,7 @@ export async function handleRegistrationStep(
 
 /**
  * Ejecuta la inserción en Supabase y la duplicación de la plantilla.
+ * Si falla después de insertar, hace rollback (borra la fila) para permitir reintentos.
  */
 async function completarRegistro(
   chatId: number,
@@ -152,6 +161,7 @@ async function completarRegistro(
   const telefono = state.telefono!;
   const correo = state.correo!;
 
+  // 1. Insertar en tabla negocios (sin sheet_id aún)
   const { data: nuevoNegocio, error: insertError } = await db
     .from('negocios')
     .insert({
@@ -169,32 +179,41 @@ async function completarRegistro(
     throw new Error(`Error al insertar en Supabase: ${insertError.message}`);
   }
 
-  const { sheetId, sheetUrl } = await duplicateMasterTemplate(nombreNegocio, correo);
+  // 2. Duplicar plantilla maestra y actualizar sheet_id (con rollback si falla)
+  try {
+    const { sheetId, sheetUrl } = await duplicateMasterTemplate(nombreNegocio, correo);
 
-  const { error: updateError } = await db
-    .from('negocios')
-    .update({ sheet_id: sheetId })
-    .eq('id', nuevoNegocio.id);
+    const { error: updateError } = await db
+      .from('negocios')
+      .update({ sheet_id: sheetId })
+      .eq('id', nuevoNegocio.id);
 
-  if (updateError) {
-    throw new Error(
-      `Se creó la hoja de cálculo pero no se pudo guardar el ID: ${updateError.message}. Contacta al administrador con este dato: Sheet ID = ${sheetId}`
+    if (updateError) {
+      throw new Error(
+        `Se creó la hoja de cálculo pero no se pudo guardar el ID: ${updateError.message}. Contacta al administrador con este dato: Sheet ID = ${sheetId}`
+      );
+    }
+
+    // 3. Limpiar estado de Redis
+    const key = buildKey(chatId);
+    await redis.del(key);
+
+    // 4. Mensaje de éxito
+    return (
+      `✅ *¡Registro exitoso!*\n\n` +
+      `Tu hoja de cálculo está lista:\n` +
+      `[Ver hoja](${sheetUrl})\n\n` +
+      `A partir de ahora puedes recibir pedidos.`
     );
+  } catch (error) {
+    // Rollback: borrar la fila insertada para que el negocio pueda reintentar
+    await db.from('negocios').delete().eq('id', nuevoNegocio.id);
+    throw error; // re-lanzar para que el caller muestre el error al usuario
   }
-
-  const key = buildKey(chatId);
-  await redis.del(key);
-
-  return (
-    `✅ *¡Registro exitoso!*\n\n` +
-    `Tu hoja de cálculo está lista:\n` +
-    `[Ver hoja](${sheetUrl})\n\n` +
-    `A partir de ahora puedes recibir pedidos.`
-  );
 }
 
 // ---------------------------------------------------------------------------
-// NUEVA FUNCIÓN EXPORTADA
+// Obtiene los datos del negocio asociado a un chat de Telegram
 // ---------------------------------------------------------------------------
 
 /**
@@ -216,7 +235,7 @@ export async function getNegocioByChatId(
 
   return {
     id: String(data.id),
-    sheet_id: data.sheet_id || '', // debería existir tras completar el registro
+    sheet_id: data.sheet_id || '',
     activo: data.activo,
   };
 }
