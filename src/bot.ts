@@ -53,8 +53,8 @@ export function getBot(): Telegraf<Context> {
         try {
           const respuesta = await handleRegistrationStep(chatId, texto);
           if (respuesta) {
-            // Quitado parse_mode: 'Markdown' para evitar rotura con caracteres especiales en mensajes de error
-            await ctx.reply(respuesta);
+            // Usar parse_mode solo si viene definido (para el mensaje de éxito)
+            await ctx.reply(respuesta.text, respuesta.parseMode ? { parse_mode: respuesta.parseMode } : undefined);
           }
         } catch (error) {
           console.error('Error en paso de registro:', error);

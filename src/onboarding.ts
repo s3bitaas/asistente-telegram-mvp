@@ -88,11 +88,12 @@ export async function startRegistration(chatId: number): Promise<string> {
 
 /**
  * Procesa la respuesta de un paso del registro.
+ * Devuelve un objeto con el texto y, opcionalmente, parseMode 'Markdown'.
  */
 export async function handleRegistrationStep(
   chatId: number,
   text: string
-): Promise<string | null> {
+): Promise<{ text: string; parseMode?: 'Markdown' } | null> {
   const key = buildKey(chatId);
   const data = await redis.get<string | RegistrationState>(key);
   if (!data) return null;
@@ -103,7 +104,7 @@ export async function handleRegistrationStep(
       state = JSON.parse(data);
     } catch {
       await redis.del(key);
-      return '❌ Ocurrió un error con el estado del registro. Usa /registrar para empezar de nuevo.';
+      return { text: '❌ Ocurrió un error con el estado del registro. Usa /registrar para empezar de nuevo.' };
     }
   } else {
     state = data as RegistrationState;
@@ -114,25 +115,25 @@ export async function handleRegistrationStep(
   switch (state.step) {
     case 'nombre':
       if (trimmed.length === 0) {
-        return '❌ El nombre no puede estar vacío. Intenta de nuevo:';
+        return { text: '❌ El nombre no puede estar vacío. Intenta de nuevo:' };
       }
       state.nombre = trimmed;
       state.step = 'telefono';
       await redis.set(key, JSON.stringify(state), { ex: STATE_TTL });
-      return '📞 Ahora escribe el número de teléfono (10 dígitos):';
+      return { text: '📞 Ahora escribe el número de teléfono (10 dígitos):' };
 
     case 'telefono':
       if (!/^\d{10}$/.test(trimmed)) {
-        return '❌ El teléfono debe tener exactamente 10 dígitos numéricos. Ejemplo: 5512345678';
+        return { text: '❌ El teléfono debe tener exactamente 10 dígitos numéricos. Ejemplo: 5512345678' };
       }
       state.telefono = trimmed;
       state.step = 'correo';
       await redis.set(key, JSON.stringify(state), { ex: STATE_TTL });
-      return '📧 Por último, escribe el correo electrónico:';
+      return { text: '📧 Por último, escribe el correo electrónico:' };
 
     case 'correo':
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
-        return '❌ El correo no tiene un formato válido. Intenta de nuevo:';
+        return { text: '❌ El correo no tiene un formato válido. Intenta de nuevo:' };
       }
       state.correo = trimmed;
 
@@ -140,11 +141,11 @@ export async function handleRegistrationStep(
         return await completarRegistro(chatId, state);
       } catch (error: any) {
         await redis.del(key);
-        return `❌ Ocurrió un error durante el registro: ${error.message}. Por favor intenta de nuevo más tarde o contacta al administrador.`;
+        return { text: `❌ Ocurrió un error durante el registro: ${error.message}. Por favor intenta de nuevo más tarde o contacta al administrador.` };
       }
 
     default:
-      return 'Estado desconocido. Usa /registrar para comenzar.';
+      return { text: 'Estado desconocido. Usa /registrar para comenzar.' };
   }
 }
 
@@ -155,7 +156,7 @@ export async function handleRegistrationStep(
 async function completarRegistro(
   chatId: number,
   state: RegistrationState
-): Promise<string> {
+): Promise<{ text: string; parseMode?: 'Markdown' }> {
   const db = getSupabase();
   const nombreNegocio = state.nombre!;
   const telefono = state.telefono!;
@@ -198,13 +199,16 @@ async function completarRegistro(
     const key = buildKey(chatId);
     await redis.del(key);
 
-    // 4. Mensaje de éxito
-    return (
-      `✅ *¡Registro exitoso!*\n\n` +
-      `Tu hoja de cálculo está lista:\n` +
-      `[Ver hoja](${sheetUrl})\n\n` +
-      `A partir de ahora puedes recibir pedidos.`
-    );
+    // 4. Mensaje de éxito (con Markdown)
+    return {
+      text:
+        `✅ *¡Registro exitoso!*\n\n` +
+        `Tu hoja de cálculo está lista:\n` +
+        `[Ver hoja](${sheetUrl})\n\n` +
+        `A partir de ahora puedes recibir pedidos.\n\n` +
+        `⚠️ Si al abrir el enlace te pide "solicitar acceso", significa que tu correo no está vinculado a una Cuenta de Google. Para solucionarlo, crea una cuenta en [accounts.google.com/signup](https://accounts.google.com/signup) usando la opción "usar mi dirección de correo actual" con el mismo correo (${correo}).`,
+      parseMode: 'Markdown',
+    };
   } catch (error) {
     // Rollback: borrar la fila insertada para que el negocio pueda reintentar
     await db.from('negocios').delete().eq('id', nuevoNegocio.id);
