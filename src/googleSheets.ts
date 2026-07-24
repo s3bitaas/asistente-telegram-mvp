@@ -134,7 +134,7 @@ export async function duplicateMasterTemplate(
 }
 
 // ---------------------------------------------------------------------------
-// Leer pestaña "Menú" de un Sheet → MenuItem[] (con caché de proceso)
+// Leer pestaña "Catálogo" de un Sheet → MenuItem[] (con caché de proceso)
 // ---------------------------------------------------------------------------
 
 export async function writeMenuTab(sheetId: string): Promise<MenuItem[]> {
@@ -149,13 +149,13 @@ export async function writeMenuTab(sheetId: string): Promise<MenuItem[]> {
   const response = await retryWithBackoff(() =>
     sheets.spreadsheets.values.get({
       spreadsheetId: sheetId,
-      range: 'Menú!A:D',
+      range: 'Catálogo!A:D', // ← cambiado de "Menú" a "Catálogo"
     })
   );
 
   const rows = response.data.values;
   if (!rows || rows.length === 0) {
-    throw new Error('La pestaña "Menú" está vacía o no existe');
+    throw new Error('La pestaña "Catálogo" está vacía o no existe'); // ← actualizado
   }
 
   const menu: MenuItem[] = [];
@@ -216,7 +216,7 @@ export async function batchWriteSales(
   await retryWithBackoff(() =>
     sheets.spreadsheets.values.append({
       spreadsheetId: sheetId,
-      range: 'Ventas!A:E',
+      range: 'Ventas!A:E', // ← se mantiene igual
       valueInputOption: 'USER_ENTERED',
       insertDataOption: 'INSERT_ROWS',
       requestBody: {
