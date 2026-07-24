@@ -37,7 +37,7 @@ function buildSystemPrompt(menu: MenuItem[]): string {
     )
     .join("\n");
 
-  return `Eres un asistente que interpreta pedidos de comida en español mexicano coloquial.
+  return `Eres un asistente que interpreta pedidos de productos o servicios de un negocio en español mexicano coloquial.
 Tu tarea es extraer los productos, cantidades y extras mencionados en el texto del usuario,
 basándote exclusivamente en el siguiente menú:
 

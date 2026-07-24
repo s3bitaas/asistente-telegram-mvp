@@ -8,8 +8,9 @@ import { redis } from './redis'; // cliente Upstash ya configurado
 // ---------------------------------------------------------------------------
 
 interface RegistrationState {
-  step: 'nombre' | 'telefono' | 'correo';
+  step: 'nombre' | 'giro' | 'telefono' | 'correo';
   nombre?: string;
+  giro?: string;
   telefono?: string;
   correo?: string;
 }
@@ -41,6 +42,18 @@ const STATE_TTL = 3600; // 1 hora
 function buildKey(chatId: number): string {
   return `registro:${chatId}`;
 }
+
+// Mapeo de número a giro
+const GIRO_MAP: Record<string, string> = {
+  '1': 'Restaurante/fonda/comida corrida',
+  '2': 'Taquería/pollería/carnicería/tortillería',
+  '3': 'Boutique de ropa o calzado',
+  '4': 'Barbería/estética/uñas',
+  '5': 'Bar',
+  '6': 'Otro',
+};
+
+const GIRO_PROMPT = `¿Cuál es el giro de tu negocio? Responde con el número o escribe tu propio texto:\n1) Restaurante/fonda/comida corrida\n2) Taquería/pollería/carnicería/tortillería\n3) Boutique de ropa o calzado\n4) Barbería/estética/uñas\n5) Bar\n6) Otro (especifica)`;
 
 /**
  * Verifica si un chat_id se encuentra en proceso de registro.
@@ -118,9 +131,21 @@ export async function handleRegistrationStep(
         return { text: '❌ El nombre no puede estar vacío. Intenta de nuevo:' };
       }
       state.nombre = trimmed;
+      state.step = 'giro';
+      await redis.set(key, JSON.stringify(state), { ex: STATE_TTL });
+      return { text: GIRO_PROMPT };
+
+    case 'giro': {
+      if (trimmed.length === 0) {
+        return { text: `❌ Debes indicar un giro. Intenta de nuevo:\n\n${GIRO_PROMPT}` };
+      }
+      // Si es un número del 1 al 6, mapear al texto; si no, usar el texto tal cual
+      const giroFinal = GIRO_MAP[trimmed] || trimmed;
+      state.giro = giroFinal;
       state.step = 'telefono';
       await redis.set(key, JSON.stringify(state), { ex: STATE_TTL });
       return { text: '📞 Ahora escribe el número de teléfono (10 dígitos):' };
+    }
 
     case 'telefono':
       if (!/^\d{10}$/.test(trimmed)) {
@@ -159,6 +184,7 @@ async function completarRegistro(
 ): Promise<{ text: string; parseMode?: 'Markdown' }> {
   const db = getSupabase();
   const nombreNegocio = state.nombre!;
+  const giro = state.giro!;
   const telefono = state.telefono!;
   const correo = state.correo!;
 
@@ -168,6 +194,7 @@ async function completarRegistro(
     .insert({
       telegram_chat_id: chatId,
       nombre_negocio: nombreNegocio,
+      giro_negocio: giro,
       telefono,
       correo,
       fecha_registro: new Date().toISOString(),
