@@ -100,7 +100,7 @@ async function callDeepSeek(
         model: "deepseek-v4-flash",
         messages,
         temperature: 0,
-        max_tokens: 300,
+        max_tokens: 600, // aumentado de 300 a 600
       }),
     });
 
@@ -113,6 +113,13 @@ async function callDeepSeek(
   } catch (err) {
     throw new Error(`Error al llamar a DeepSeek: ${err instanceof Error ? err.message : err}`);
   }
+
+  // Validar que la respuesta no esté vacía
+  if (!responseText) {
+    throw new Error("DeepSeek devolvió una respuesta vacía");
+  }
+
+  console.log("Respuesta de DeepSeek:", responseText);
 
   // Intentamos parsear la respuesta
   try {
@@ -137,7 +144,7 @@ async function callDeepSeek(
           model: "deepseek-v4-flash",
           messages: retryMessages,
           temperature: 0,
-          max_tokens: 300,
+          max_tokens: 600, // también aumentado en el reintento
         }),
       });
 
@@ -147,6 +154,12 @@ async function callDeepSeek(
 
       const data2 = await res2.json();
       const secondResponse = data2.choices[0].message.content.trim();
+
+      if (!secondResponse) {
+        throw new Error("DeepSeek devolvió una respuesta vacía en el reintento");
+      }
+
+      console.log("Respuesta del reintento de DeepSeek:", secondResponse);
 
       return JSON.parse(secondResponse) as ParsedOrder;
     } else {
