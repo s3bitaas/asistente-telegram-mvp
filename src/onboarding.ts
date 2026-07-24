@@ -44,7 +44,6 @@ function buildKey(chatId: number): string {
 
 /**
  * Verifica si un chat_id se encuentra en proceso de registro.
- * Ahora es asíncrono porque consulta Redis.
  */
 export async function isChatInRegistration(chatId: number): Promise<boolean> {
   const key = buildKey(chatId);
@@ -81,9 +80,6 @@ export async function startRegistration(chatId: number): Promise<string> {
 
 /**
  * Procesa la respuesta de un paso del registro.
- * @param chatId ID del chat de Telegram
- * @param text Texto enviado por el usuario
- * @returns Respuesta que el bot debe enviar, o null si el flujo terminó (éxito o error manejado externamente)
  */
 export async function handleRegistrationStep(
   chatId: number,
@@ -91,9 +87,8 @@ export async function handleRegistrationStep(
 ): Promise<string | null> {
   const key = buildKey(chatId);
   const data = await redis.get<string | RegistrationState>(key);
-  if (!data) return null; // no hay registro activo
+  if (!data) return null;
 
-  // Manejar tanto string JSON como objeto ya parseado (Upstash Redis)
   let state: RegistrationState;
   if (typeof data === 'string') {
     try {
@@ -133,11 +128,9 @@ export async function handleRegistrationStep(
       }
       state.correo = trimmed;
 
-      // ----- Todos los datos completos: insertar y duplicar plantilla -----
       try {
         return await completarRegistro(chatId, state);
       } catch (error: any) {
-        // Limpiar estado en caso de error grave
         await redis.del(key);
         return `❌ Ocurrió un error durante el registro: ${error.message}. Por favor intenta de nuevo más tarde o contacta al administrador.`;
       }
@@ -159,7 +152,6 @@ async function completarRegistro(
   const telefono = state.telefono!;
   const correo = state.correo!;
 
-  // 1. Insertar en tabla negocios (sin sheet_id aún)
   const { data: nuevoNegocio, error: insertError } = await db
     .from('negocios')
     .insert({
@@ -177,10 +169,8 @@ async function completarRegistro(
     throw new Error(`Error al insertar en Supabase: ${insertError.message}`);
   }
 
-  // 2. Duplicar plantilla maestra y obtener sheetId
   const { sheetId, sheetUrl } = await duplicateMasterTemplate(nombreNegocio, correo);
 
-  // 3. Actualizar el registro con el sheet_id
   const { error: updateError } = await db
     .from('negocios')
     .update({ sheet_id: sheetId })
@@ -192,15 +182,41 @@ async function completarRegistro(
     );
   }
 
-  // 4. Limpiar estado de Redis
   const key = buildKey(chatId);
   await redis.del(key);
 
-  // 5. Mensaje de éxito
   return (
     `✅ *¡Registro exitoso!*\n\n` +
     `Tu hoja de cálculo está lista:\n` +
     `[Ver hoja](${sheetUrl})\n\n` +
     `A partir de ahora puedes recibir pedidos.`
   );
+}
+
+// ---------------------------------------------------------------------------
+// NUEVA FUNCIÓN EXPORTADA
+// ---------------------------------------------------------------------------
+
+/**
+ * Obtiene los datos del negocio asociado a un chat de Telegram.
+ * @returns Objeto con id, sheet_id y activo, o null si no existe.
+ */
+export async function getNegocioByChatId(
+  chatId: number
+): Promise<{ id: string; sheet_id: string; activo: boolean } | null> {
+  const db = getSupabase();
+  const { data, error } = await db
+    .from('negocios')
+    .select('id, sheet_id, activo')
+    .eq('telegram_chat_id', chatId)
+    .maybeSingle();
+
+  if (error) throw new Error(`Error al consultar negocios: ${error.message}`);
+  if (!data) return null;
+
+  return {
+    id: String(data.id),
+    sheet_id: data.sheet_id || '', // debería existir tras completar el registro
+    activo: data.activo,
+  };
 }

@@ -14,11 +14,10 @@ import {
   isChatInRegistration,
   startRegistration,
   handleRegistrationStep,
+  getNegocioByChatId, // ← nueva importación
 } from './onboarding';
 
 let bot: Telegraf<Context> | null = null;
-
-const TEST_SHEET_ID = process.env.TEST_SHEET_ID || 'tu-id-de-prueba';
 
 export function getBot(): Telegraf<Context> {
   if (!bot) {
@@ -28,9 +27,7 @@ export function getBot(): Telegraf<Context> {
 
     // Comando /start (bienvenida genérica)
     bot.start((ctx) => {
-      return ctx.reply(
-        '¡Bienvenido! Envíame tu pedido y lo registraré.'
-      );
+      return ctx.reply('¡Bienvenido! Envíame tu pedido y lo registraré.');
     });
 
     // Comando /registrar – inicia el flujo de onboarding
@@ -62,15 +59,25 @@ export function getBot(): Telegraf<Context> {
           console.error('Error en paso de registro:', error);
           await ctx.reply('❌ Error inesperado. Usa /registrar para reiniciar.');
         }
-        return; // Salir, no procesar como pedido
+        return;
       }
+
+      // --- Validación del negocio (debe estar registrado y activo) ---
+      const negocio = await getNegocioByChatId(chatId);
+      if (!negocio) {
+        await ctx.reply('Debes registrarte primero. Usa /registrar para empezar.');
+        return;
+      }
+      if (!negocio.activo) {
+        await ctx.reply('Tu cuenta está inactiva. Contacta al administrador.');
+        return;
+      }
+      const sheetId = negocio.sheet_id; // hoja de cálculo del negocio
 
       // --- Procesamiento normal de pedidos ---
       try {
         // --- Rate limit diario ---
-        const { success, limit, remaining } = await rateLimiter.limit(
-          `rate:${chatId}`
-        );
+        const { success } = await rateLimiter.limit(`rate:${chatId}`);
         if (!success) {
           await ctx.reply('Has alcanzado el límite diario de mensajes. Vuelve mañana.');
           return;
@@ -82,8 +89,8 @@ export function getBot(): Telegraf<Context> {
           return;
         }
 
-        // --- Obtener menú desde Google Sheets ---
-        const menu = await writeMenuTab(TEST_SHEET_ID);
+        // --- Obtener menú desde Google Sheets (ahora usa la hoja del negocio) ---
+        const menu = await writeMenuTab(sheetId);
 
         // --- Parseo del pedido con IA ---
         const orden = await parseOrder(texto, menu);
@@ -167,7 +174,7 @@ export function getBot(): Telegraf<Context> {
       }
     });
 
-    // 3. Acción "volver" – regresa al mensaje original con los botones normales
+    // 3. Acción "volver" – regresa al mensaje original
     bot.action(/^volver:(-?\d+):(\d+)$/, async (ctx) => {
       const chatIdFromData = parseInt(ctx.match[1], 10);
       const messageId = parseInt(ctx.match[2], 10);
@@ -204,7 +211,7 @@ export function getBot(): Telegraf<Context> {
       }
     });
 
-    // 4. Acción "modificar" – se mantiene igual (placeholder)
+    // 4. Acción "modificar" – placeholder
     bot.action(/^modificar:(-?\d+):(\d+)$/, async (ctx) => {
       const chatIdFromData = parseInt(ctx.match[1], 10);
       const messageId = parseInt(ctx.match[2], 10);
