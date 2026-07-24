@@ -1,7 +1,7 @@
 // api/cron/corte-diario.ts
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { getDailyOrders } from '../../src/redis';
+import { getDailyOrders, deleteDailyOrders } from '../../src/redis';
 import { batchWriteSales } from '../../src/googleSheets';
 import type { ParsedOrder } from '../../src/orderParser';
 
@@ -85,6 +85,14 @@ async function processNegocio(
 
     // Escribir en Google Sheets
     await batchWriteSales(sheetId, pedidos);
+
+    // Limpiar pedidos de Redis para evitar doble procesamiento
+    try {
+      await deleteDailyOrders(chatId);
+    } catch (cleanupError) {
+      console.error(`Error limpiando Redis para ${chatId}:`, cleanupError);
+      // No detenemos el proceso, ya se guardó en Sheets
+    }
 
     // Calcular resumen para este negocio
     let totalVentas = 0;
@@ -206,7 +214,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         negociosConPedidos++;
       }
     } else {
-      // Si alguna promesa rechazó inesperadamente (no debería ocurrir porque processNegocio nunca rechaza)
       const errMsg = `Error inesperado: ${result.reason}`;
       errores.push(errMsg);
       console.error(errMsg);

@@ -101,3 +101,23 @@ export async function getDailyOrders(
   orders.sort((a, b) => b.timestamp - a.timestamp);
   return orders;
 }
+
+/**
+ * Borra todas las claves de pedidos de un chat (patrón pedido:{chatId}:*)
+ */
+export async function deleteDailyOrders(
+  chatId: number | string
+): Promise<void> {
+  const pattern = `pedido:${chatId}:*`;
+  let cursor: string | number = 0;
+
+  do {
+    const result = await redis.scan(cursor, { match: pattern, count: 100 });
+    cursor = result[0];
+    const keys = result[1];
+
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
+  } while (String(cursor) !== '0');
+}
